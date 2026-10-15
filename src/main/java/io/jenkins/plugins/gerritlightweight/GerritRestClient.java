@@ -1,14 +1,17 @@
 package io.jenkins.plugins.gerritlightweight;
 
 import hudson.ProxyConfiguration;
+import hudson.util.FormValidation;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.HttpURLConnection;
 import java.net.URI;
-import java.net.URL;
 import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.Base64;
 import net.sf.json.JSONObject;
 
@@ -24,34 +27,34 @@ final class GerritRestClient {
     private final String project;
     /** Basic authentication header value, or {@code null} for anonymous requests. */
     private final String authorization;
-    /** Transport factory used to create a fresh connection for each request. */
-    private final ConnectionFactory connections;
+    /** Transport used to execute requests. */
+    private final Transport transport;
 
-    /**
-     * Opens connections without performing a request, allowing tests to supply an in-memory transport.
-     */
+    /** Allows tests to supply an in-memory transport. */
     @FunctionalInterface
-    interface ConnectionFactory {
+    interface Transport {
         /**
-         * Creates a connection for a REST request.
+         * Executes a REST request.
          *
-         * @param url complete endpoint URL
-         * @return connection to be configured and disconnected by the client
-         * @throws IOException if the connection cannot be created
+         * @param request configured GET request
+         * @return response whose body will be closed by the client
+         * @throws IOException if the request fails
+         * @throws InterruptedException if the request is interrupted
          */
-        HttpURLConnection open(URL url) throws IOException;
+        HttpResponse<InputStream> send(HttpRequest request) throws IOException, InterruptedException;
     }
 
     /**
-     * Opens an HTTP(S) connection using the Jenkins controller proxy configuration.
+     * Creates a transport using the Jenkins controller proxy configuration.
      *
-     * @param url complete endpoint URL
-     * @return unconnected HTTP connection
-     * @throws IOException if the connection cannot be opened
+     * @return transport with redirects disabled and a 30-second connection timeout
      */
-    @SuppressWarnings("deprecation")
-    private static HttpURLConnection openConnection(URL url) throws IOException {
-        return (HttpURLConnection) ProxyConfiguration.open(url);
+    private static Transport newTransport() {
+        HttpClient client = ProxyConfiguration.newHttpClientBuilder()
+                .connectTimeout(Duration.ofSeconds(30))
+                .followRedirects(HttpClient.Redirect.NEVER)
+                .build();
+        return request -> client.send(request, HttpResponse.BodyHandlers.ofInputStream());
     }
 
     /**
@@ -64,31 +67,27 @@ final class GerritRestClient {
      * @throws IOException if the URL is invalid or the project is missing
      */
     GerritRestClient(String serverUrl, String project, String username, String password) throws IOException {
-        this(serverUrl, project, username, password, GerritRestClient::openConnection);
+        this(serverUrl, project, username, password, newTransport());
     }
 
     /**
-     * Creates a client with a supplied connection factory. Authenticated requests use Basic
+     * Creates a client with a supplied transport. Authenticated requests use Basic
      * authentication and append {@code /a} to the base URL. Construction does not perform network I/O.
      *
      * @param serverUrl Gerrit HTTP(S) base URL, without credentials, query, fragment or {@code /a}
      * @param project unencoded Gerrit project name
      * @param username HTTP username, or {@code null} for anonymous access
      * @param password HTTP password or token; used only when a username is supplied
-     * @param connections factory for creating each request connection
+     * @param transport transport for executing each request
      * @throws IOException if the URL is invalid or the project is missing
      */
-    GerritRestClient(String serverUrl, String project, String username, String password, ConnectionFactory connections)
+    GerritRestClient(String serverUrl, String project, String username, String password, Transport transport)
             throws IOException {
-        this.connections = connections;
+        this.transport = transport;
         String normalizedUrl = serverUrl == null ? "" : serverUrl;
         try {
-            URI uri = URI.create(normalizedUrl);
-            if (!("https".equals(uri.getScheme()) || "http".equals(uri.getScheme()))
-                    || uri.getHost() == null
-                    || uri.getUserInfo() != null
-                    || uri.getQuery() != null
-                    || uri.getFragment() != null) {
+            FormValidation urlValidation = Utilities.validateUrl(normalizedUrl);
+            if (urlValidation.kind != FormValidation.Kind.OK) {
                 throw new IllegalArgumentException();
             }
             base = normalizedUrl.replaceAll("/+$", "") + (username == null ? "" : "/a");
@@ -184,8 +183,8 @@ final class GerritRestClient {
     }
 
     /**
-     * Executes a bounded GET request with 30-second connect and read timeouts.
-     * Redirects are rejected to avoid forwarding credentials. Connections are disconnected
+     * Executes a bounded GET request with a 30-second request timeout.
+     * Redirects are rejected to avoid forwarding credentials. Response streams are closed
      * after every request; response bodies are excluded from failure messages.
      *
      * @param path encoded REST path beginning with a slash, relative to the authentication base URL
@@ -194,23 +193,25 @@ final class GerritRestClient {
      * @throws IOException for other HTTP statuses, oversized responses or transport failures
      */
     private byte[] get(String path) throws IOException {
-        HttpURLConnection connection = connections.open(URI.create(base + path).toURL());
-        connection.setConnectTimeout(30_000);
-        connection.setReadTimeout(30_000);
-        connection.setInstanceFollowRedirects(false);
-        connection.setRequestProperty("Accept", "application/json, text/plain");
-        if (authorization != null) connection.setRequestProperty("Authorization", authorization);
+        HttpRequest.Builder builder = ProxyConfiguration.newHttpRequestBuilder(URI.create(base + path))
+                .timeout(Duration.ofSeconds(30))
+                .header("Accept", "application/json, text/plain")
+                .GET();
+        if (authorization != null) builder.header("Authorization", authorization);
+        HttpResponse<InputStream> response;
         try {
-            int status = connection.getResponseCode();
+            response = transport.send(builder.build());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Gerrit request interrupted", e);
+        }
+        try (InputStream input = response.body()) {
+            int status = response.statusCode();
             if (status == 404) throw new FileNotFoundException(Messages.GerritRestClient_NotFound());
             if (status != 200) throw new IOException(Messages.GerritRestClient_RequestFailed(status));
-            try (InputStream input = connection.getInputStream()) {
-                byte[] response = input.readNBytes(MAX_RESPONSE + 1);
-                if (response.length > MAX_RESPONSE) throw new IOException(Messages.GerritRestClient_ResponseTooLarge());
-                return response;
-            }
-        } finally {
-            connection.disconnect();
+            byte[] bytes = input.readNBytes(MAX_RESPONSE + 1);
+            if (bytes.length > MAX_RESPONSE) throw new IOException(Messages.GerritRestClient_ResponseTooLarge());
+            return bytes;
         }
     }
 }

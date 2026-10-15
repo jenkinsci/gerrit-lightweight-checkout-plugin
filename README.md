@@ -4,9 +4,9 @@ Fetch a Pipeline's Jenkinsfile through the Gerrit REST API instead of fetching t
 
 ## Configure a job
 
-1. Install the plugin and its Git, SCM API, and Credentials dependencies. Jenkins 2.528.3 or newer is required.
+1. Install the plugin and its Git, SCM API, and Credentials dependencies.
 2. In a Pipeline job, choose **Pipeline script from SCM**, then **Git**. Configure the repository URL and Git credentials as usual.
-3. Configure exactly one remote and one branch. Supported values include `*/main`, `refs/heads/feature/topic`, a full 40-character commit SHA, and Gerrit patch-set refs such as `refs/changes/34/1234/5`.
+3. Configure exactly one remote and one branch. Supported values include `*/main`, `refs/heads/feature/topic`, a full 40-character commit SHA, and Gerrit patch-set refs such as `refs/changes/34/1234/5`. You can also use variables that are provided by a plugin the gives this information (e.g., the Gerrit Trigger Plugin).
 4. Under **Additional Behaviours**, add **Gerrit REST lightweight checkout**.
 5. Enter the Gerrit web URL (for example `https://review.example.com/gerrit`) and exact project name (for example `team/service`). The project must match the Git repository. Do not include `/a` in the URL or URL-encode the project.
 6. Select an optional **username/password** credential containing your Gerrit username and HTTP password/token. REST credentials are separate from Git SSH credentials. Leave this empty for anonymous access.

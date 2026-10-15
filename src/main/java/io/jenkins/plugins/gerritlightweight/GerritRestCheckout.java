@@ -10,6 +10,7 @@ import hudson.model.Item;
 import hudson.plugins.git.extensions.GitSCMExtension;
 import hudson.plugins.git.extensions.GitSCMExtensionDescriptor;
 import hudson.security.ACL;
+import hudson.util.FormValidation;
 import hudson.util.ListBoxModel;
 import jenkins.model.Jenkins;
 import org.jenkinsci.Symbol;
@@ -104,6 +105,11 @@ public class GerritRestCheckout extends GitSCMExtension {
                             StandardUsernamePasswordCredentials.class,
                             URIRequirementBuilder.fromUri(serverUrl).build())
                     .includeCurrentValue(credentialsId);
+        }
+
+        @POST
+        public FormValidation doCheckServerUrl(@QueryParameter String serverUrl) {
+            return Utilities.validateUrl(serverUrl);
         }
     }
 }
