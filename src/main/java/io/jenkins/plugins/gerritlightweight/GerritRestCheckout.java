@@ -16,6 +16,7 @@ import org.jenkinsci.Symbol;
 import org.kohsuke.stapler.AncestorInPath;
 import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.QueryParameter;
+import org.kohsuke.stapler.verb.POST;
 
 /** Explicitly opts a Git SCM into REST-based Pipeline script retrieval. */
 public class GerritRestCheckout extends GitSCMExtension {
@@ -89,6 +90,7 @@ public class GerritRestCheckout extends GitSCMExtension {
          * @param credentialsId currently selected credential ID
          * @return available credential choices, including the current selection
          */
+        @POST
         public ListBoxModel doFillCredentialsIdItems(
                 @AncestorInPath Item item, @QueryParameter String serverUrl, @QueryParameter String credentialsId) {
             StandardListBoxModel model = new StandardListBoxModel();
