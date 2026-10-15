@@ -1,0 +1,5 @@
+<?jelly escape-by-default='true'?>
+<div>
+  Retrieves Pipeline scripts from Gerrit using its REST API for Jenkins lightweight checkout.
+  Add the Gerrit REST lightweight checkout behavior to a Git SCM in a Pipeline script from SCM job.
+</div>
